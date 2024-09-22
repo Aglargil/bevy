@@ -3134,7 +3134,12 @@ name = "cubic_splines"
 path = "examples/math/cubic_splines.rs"
 doc-scrape-examples = true
 
-[package.metadata.example.cubic_splines]
+[[example]]
+name = "test"
+path = "examples/2d/test.rs"
+doc-scrape-examples = true
+
+[package.metadata.example.test]
 name = "Cubic Splines"
 description = "Exhibits different modes of constructing cubic curves using splines"
 category = "Math"
