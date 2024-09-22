@@ -5,9 +5,8 @@ use bevy::{
     input::{mouse::MouseButtonInput, ButtonState},
     math::{Isometry2d, Vec2},
     prelude::*,
+    sprite::MaterialMesh2dBundle,
 };
-// Systems
-
 fn setup_camera(mut commands: Commands) {
     commands.spawn(Camera2dBundle::default());
 }
@@ -17,30 +16,21 @@ fn plot_line(mut gizmos: Gizmos, query: Query<&MovablePoint>) {
     if points.len() < 2 {
         return;
     }
-    for i in 0..points.len() - 1 {
-        println!("i: {}", i);
-        let point1 = points[i];
-        let point2 = points[i + 1];
-        gizmos.line_2d(
-            point1.position.translation,
-            point2.position.translation,
-            YELLOW,
+
+    gizmos.linestrip_2d(points.iter().map(|p| p.position.translation), YELLOW);
+}
+
+fn plot_point(mut gizmos: Gizmos, mut query: Query<(&mut Transform, &MovablePoint)>) {
+    for (mut transform, movable_point) in &mut query {
+        transform.translation = Vec3::new(
+            movable_point.position.translation.x,
+            movable_point.position.translation.y,
+            0.0,
         );
     }
 }
 
-fn plot_point(mut gizmos: Gizmos, query: Query<&MovablePoint>) {
-    for point in &query {
-        let color = if point.is_selected {
-            point.selected_color
-        } else {
-            point.default_color
-        };
-        gizmos.circle_2d(point.position, point.size, color);
-    }
-}
-
-fn move_point_with_mouse(
+fn move_point_with_left_mouse(
     mut query: Query<&mut MovablePoint>,
     input: Res<ButtonInput<MouseButton>>,
     camera: Query<(&Camera, &GlobalTransform)>,
@@ -63,11 +53,9 @@ fn move_point_with_mouse(
     let Ok((camera, camera_transform)) = camera.get_single() else {
         return;
     };
-    // Convert the starting point and end point (current mouse pos) into world coords:
     let Ok(mouse_point) = camera.viewport_to_world_2d(camera_transform, mouse_position) else {
         return;
     };
-    println!("mouse_point: {:?}", mouse_point);
     for mut point in query.iter_mut() {
         if point.is_selected {
             point.position.translation = mouse_point;
@@ -80,6 +68,44 @@ fn move_point_with_mouse(
             point.is_selected = true;
             break;
         }
+    }
+}
+
+fn add_point_with_right_mouse(
+    mut commands: Commands,
+    camera: Query<(&Camera, &GlobalTransform)>,
+    input: Res<ButtonInput<MouseButton>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mouse_position: Res<MousePosition>,
+) {
+    if input.just_pressed(MouseButton::Right) {
+        let Some(mouse_position) = mouse_position.0 else {
+            return;
+        };
+        let Ok((camera, camera_transform)) = camera.get_single() else {
+            return;
+        };
+        let Ok(world_position) = camera.viewport_to_world_2d(camera_transform, mouse_position)
+        else {
+            return;
+        };
+        let circle = Circle::new(5.0);
+        commands.spawn((
+            MovablePoint {
+                position: Isometry2d::from_xy(world_position.x, world_position.y),
+                size: circle.radius,
+                default_color: GREEN,
+                selected_color: RED,
+                is_selected: false,
+            },
+            MaterialMesh2dBundle {
+                mesh: meshes.add(circle.mesh().build()).into(),
+                material: materials.add(Color::WHITE),
+                transform: Transform::from_xyz(world_position.x, world_position.y, 0.0),
+                ..Default::default()
+            },
+        ));
     }
 }
 
@@ -98,36 +124,12 @@ fn handle_mouse_move(
     }
 }
 
-fn add_point_with_right_mouse(
-    mut commands: Commands,
-    camera: Query<(&Camera, &GlobalTransform)>,
-    input: Res<ButtonInput<MouseButton>>,
-    mouse_position: Res<MousePosition>,
-) {
-    if input.just_pressed(MouseButton::Right) {
-        let Some(mouse_position) = mouse_position.0 else {
-            return;
-        };
-        let Ok((camera, camera_transform)) = camera.get_single() else {
-            return;
-        };
-        let Ok(world_position) = camera.viewport_to_world_2d(camera_transform, mouse_position)
-        else {
-            return;
-        };
-        let circle = Circle::new(5.0);
-        commands.spawn(MovablePoint {
-            position: Isometry2d::from_xy(world_position.x, world_position.y),
-            size: circle.radius,
-            default_color: GREEN,
-            selected_color: RED,
-            is_selected: false,
-        });
-    }
-}
-
 #[derive(Component)]
-struct Name(String);
+struct Line {
+    start: Isometry2d,
+    end: Isometry2d,
+    color: Srgba,
+}
 
 #[derive(Component)]
 struct MovablePoint {
@@ -138,6 +140,9 @@ struct MovablePoint {
     is_selected: bool,
 }
 
+#[derive(Component)]
+struct Name(String);
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -147,10 +152,10 @@ fn main() {
             Update,
             (
                 handle_mouse_move,
-                move_point_with_mouse,
+                move_point_with_left_mouse,
                 add_point_with_right_mouse,
-                plot_point,
                 plot_line,
+                plot_point,
             )
                 .chain(),
         )
