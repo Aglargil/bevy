@@ -2,7 +2,6 @@
 
 use bevy::{
     color::palettes::css::*,
-    input::{mouse::MouseButtonInput, ButtonState},
     math::{Isometry2d, Vec2},
     prelude::*,
     sprite::MaterialMesh2dBundle,
@@ -20,54 +19,13 @@ fn plot_line(mut gizmos: Gizmos, query: Query<&MovablePoint>) {
     gizmos.linestrip_2d(points.iter().map(|p| p.position.translation), YELLOW);
 }
 
-fn plot_point(mut gizmos: Gizmos, mut query: Query<(&mut Transform, &MovablePoint)>) {
+fn plot_point(mut query: Query<(&mut Transform, &MovablePoint)>) {
     for (mut transform, movable_point) in &mut query {
         transform.translation = Vec3::new(
             movable_point.position.translation.x,
             movable_point.position.translation.y,
             0.0,
         );
-    }
-}
-
-fn move_point_with_left_mouse(
-    mut query: Query<&mut MovablePoint>,
-    input: Res<ButtonInput<MouseButton>>,
-    camera: Query<(&Camera, &GlobalTransform)>,
-    mouse_position: Res<MousePosition>,
-) {
-    let mut clear_selected = || {
-        for mut point in &mut query {
-            point.is_selected = false;
-        }
-    };
-    let Some(mouse_position) = mouse_position.0 else {
-        clear_selected();
-        return;
-    };
-    if !input.pressed(MouseButton::Left) {
-        clear_selected();
-        return;
-    }
-
-    let Ok((camera, camera_transform)) = camera.get_single() else {
-        return;
-    };
-    let Ok(mouse_point) = camera.viewport_to_world_2d(camera_transform, mouse_position) else {
-        return;
-    };
-    for mut point in query.iter_mut() {
-        if point.is_selected {
-            point.position.translation = mouse_point;
-            return;
-        }
-    }
-
-    for mut point in &mut query {
-        if point.position.translation.distance(mouse_point) < point.size {
-            point.is_selected = true;
-            break;
-        }
     }
 }
 
@@ -95,8 +53,6 @@ fn add_point_with_right_mouse(
             MovablePoint {
                 position: Isometry2d::from_xy(world_position.x, world_position.y),
                 size: circle.radius,
-                default_color: GREEN,
-                selected_color: RED,
                 is_selected: false,
             },
             MaterialMesh2dBundle {
@@ -125,18 +81,9 @@ fn handle_mouse_move(
 }
 
 #[derive(Component)]
-struct Line {
-    start: Isometry2d,
-    end: Isometry2d,
-    color: Srgba,
-}
-
-#[derive(Component)]
 struct MovablePoint {
     position: Isometry2d,
     size: f32,
-    default_color: Srgba,
-    selected_color: Srgba,
     is_selected: bool,
 }
 
@@ -152,7 +99,6 @@ fn main() {
             Update,
             (
                 handle_mouse_move,
-                move_point_with_left_mouse,
                 add_point_with_right_mouse,
                 plot_line,
                 plot_point,
