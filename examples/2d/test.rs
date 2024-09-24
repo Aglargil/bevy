@@ -1,53 +1,98 @@
-//! This example demonstrates how to use the `bevy_gizmos` crate to draw lines and points in 2D.
+//! 这个示例演示了如何使用 `bevy_gizmos` 包在 2D 中绘制线条和点。
 
 use bevy::{
     color::palettes::css::*,
-    input::{mouse::MouseButtonInput, ButtonState},
     math::{Isometry2d, Vec2},
     prelude::*,
 };
-// Systems
 
-fn setup_camera(mut commands: Commands) {
-    commands.spawn(Camera2dBundle::default());
+#[derive(Default, Resource)]
+struct MousePosition(Option<Vec2>);
+
+// 我们可以创建自己的 gizmo 配置组！
+#[derive(Default, Reflect, GizmoConfigGroup)]
+struct MyRoundGizmos {}
+
+struct MovablePoint {
+    position: Isometry2d,
+    show_size: f32,
+    selected_size: f32,
+    default_color: Srgba,
+    selected_color: Srgba,
+    is_selected: bool,
 }
 
-fn plot_line(mut gizmos: Gizmos, query: Query<&MovablePoint>) {
-    let points: Vec<&MovablePoint> = query.iter().collect();
-    if points.len() < 2 {
+#[derive(Default, Resource)]
+struct ControlPoints {
+    points: Vec<MovablePoint>,
+}
+
+impl Default for MovablePoint {
+    fn default() -> Self {
+        Self {
+            position: Isometry2d::from_xy(0.0, 0.0),
+            show_size: 5.0,
+            selected_size: 10.0,
+            default_color: GREEN,
+            selected_color: RED,
+            is_selected: false,
+        }
+    }
+}
+
+fn setup(mut commands: Commands, mut config_store: ResMut<GizmoConfigStore>) {
+    commands.spawn(Camera2dBundle::default());
+    let (my_config, _) = config_store.config_mut::<MyRoundGizmos>();
+    my_config.line_width = 5.0;
+}
+
+fn plot_line(mut gizmos: Gizmos, control_points: Res<ControlPoints>) {
+    let movable_points: Vec<&MovablePoint> = control_points.points.iter().collect();
+    if movable_points.len() < 2 {
         return;
     }
-    for i in 0..points.len() - 1 {
-        println!("i: {}", i);
-        let point1 = points[i];
-        let point2 = points[i + 1];
-        gizmos.line_2d(
-            point1.position.translation,
-            point2.position.translation,
-            YELLOW,
-        );
+    let points: Vec<Vec2> = movable_points
+        .iter()
+        .map(|p| p.position.translation)
+        .collect();
+
+    gizmos.linestrip_2d(points.clone(), WHITE);
+
+    // 使用辅助函数渲染 B-Spline
+    let b_spline = CubicBSpline::new(points.clone());
+    render_curve(&mut gizmos, b_spline.to_curve(), PINK);
+
+    // 使用辅助函数渲染 Cardinal Spline
+    let cardinal_spline = CubicCardinalSpline::new_catmull_rom(points.clone());
+    render_curve(&mut gizmos, cardinal_spline.to_curve(), YELLOW);
+
+    // 特殊情况：渲染 Bezier Spline
+    if points.len() >= 4 {
+        let points_array: Vec<[Vec2; 4]> = vec![[points[0], points[1], points[2], points[3]]];
+        let bezier_spline = CubicBezier::new(points_array);
+        render_curve(&mut gizmos, bezier_spline.to_curve(), GREEN);
     }
 }
 
-fn plot_point(mut gizmos: Gizmos, query: Query<&MovablePoint>) {
-    for point in &query {
+fn plot_point(mut gizmos: Gizmos<MyRoundGizmos>, control_points: Res<ControlPoints>) {
+    for point in control_points.points.iter() {
         let color = if point.is_selected {
             point.selected_color
         } else {
             point.default_color
         };
-        gizmos.circle_2d(point.position, point.size, color);
+        gizmos.circle_2d(point.position, point.show_size, color);
     }
 }
 
 fn move_point_with_mouse(
-    mut query: Query<&mut MovablePoint>,
+    mut control_points: ResMut<ControlPoints>,
     input: Res<ButtonInput<MouseButton>>,
-    camera: Query<(&Camera, &GlobalTransform)>,
     mouse_position: Res<MousePosition>,
+    camera: Query<(&Camera, &GlobalTransform)>,
 ) {
     let mut clear_selected = || {
-        for mut point in &mut query {
+        for point in control_points.points.iter_mut() {
             point.is_selected = false;
         }
     };
@@ -67,26 +112,20 @@ fn move_point_with_mouse(
     let Ok(mouse_point) = camera.viewport_to_world_2d(camera_transform, mouse_position) else {
         return;
     };
-    println!("mouse_point: {:?}", mouse_point);
-    for mut point in query.iter_mut() {
+    for point in control_points.points.iter_mut() {
         if point.is_selected {
             point.position.translation = mouse_point;
             return;
         }
     }
 
-    for mut point in &mut query {
-        if point.position.translation.distance(mouse_point) < point.size {
+    for point in control_points.points.iter_mut() {
+        if point.position.translation.distance(mouse_point) < point.selected_size {
             point.is_selected = true;
             break;
         }
     }
 }
-
-// Components
-/// The current mouse position, if known.
-#[derive(Clone, Default, Resource)]
-struct MousePosition(Option<Vec2>);
 
 /// Update the current cursor position and track it in the [`MousePosition`] resource.
 fn handle_mouse_move(
@@ -99,10 +138,10 @@ fn handle_mouse_move(
 }
 
 fn add_point_with_right_mouse(
-    mut commands: Commands,
     camera: Query<(&Camera, &GlobalTransform)>,
     input: Res<ButtonInput<MouseButton>>,
     mouse_position: Res<MousePosition>,
+    mut control_points: ResMut<ControlPoints>,
 ) {
     if input.just_pressed(MouseButton::Right) {
         let Some(mouse_position) = mouse_position.0 else {
@@ -115,37 +154,30 @@ fn add_point_with_right_mouse(
         else {
             return;
         };
-        let circle = Circle::new(5.0);
-        commands.spawn(MovablePoint {
+        control_points.points.push(MovablePoint {
             position: Isometry2d::from_xy(world_position.x, world_position.y),
-            size: circle.radius,
-            default_color: GREEN,
-            selected_color: RED,
-            is_selected: false,
+            ..default()
         });
     }
 }
 
-#[derive(Component)]
-struct Name(String);
-
-#[derive(Component)]
-struct MovablePoint {
-    position: Isometry2d,
-    size: f32,
-    default_color: Srgba,
-    selected_color: Srgba,
-    is_selected: bool,
+fn handle_keypress(keyboard: Res<ButtonInput<KeyCode>>, mut control_points: ResMut<ControlPoints>) {
+    if keyboard.just_pressed(KeyCode::KeyC) {
+        control_points.points.pop();
+    }
 }
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .insert_resource(MousePosition::default())
-        .add_systems(Startup, setup_camera)
+        .insert_resource(ControlPoints::default())
+        .init_gizmo_group::<MyRoundGizmos>()
+        .add_systems(Startup, setup)
         .add_systems(
             Update,
             (
+                handle_keypress,
                 handle_mouse_move,
                 move_point_with_mouse,
                 add_point_with_right_mouse,
@@ -155,4 +187,15 @@ fn main() {
                 .chain(),
         )
         .run();
+}
+
+// 辅助函数，用于生成和渲染曲线
+fn render_curve<E>(gizmos: &mut Gizmos, curve: Result<CubicCurve<Vec2>, E>, color: Srgba) {
+    if let Ok(curve) = curve {
+        let resolution = 100 * curve.segments().len(); // 根据曲线段数调整分辨率
+        gizmos.linestrip(
+            curve.iter_positions(resolution).map(|pt| pt.extend(0.0)),
+            color,
+        );
+    }
 }
